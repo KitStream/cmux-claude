@@ -11,7 +11,10 @@
 # Three files that already exist on a working machine are PATCHED, not replaced:
 #   ~/.config/cmux/cmux.json      a marked block from patches/cmux.patch.jsonc is inserted
 #                                 before "schemaVersion" (JSONC: comments survive, jq cannot
-#                                 be used); an existing block is replaced.
+#                                 be used); an existing block is replaced. The block switches
+#                                 the socket to password mode; the generated password is kept
+#                                 in ~/.config/cmux/socket-password (mode 600) and handed to
+#                                 cmux through the block once (see patch_cmux_json).
 #   ~/.claude/settings.json       the hook groups in patches/claude-settings.hooks.json are
 #                                 merged with jq; a group whose command is already present
 #                                 is left alone, everything else in the file is untouched.
@@ -78,8 +81,19 @@ done < <(find "$here/cmux" -type f -print0 | sort -z)
 # inserted and the user is told to merge by hand: cmux would see a duplicate key otherwise.
 begin_mark='  // >>> cmux-claude: managed by install.sh, do not edit between the markers'
 end_mark='  // <<< cmux-claude'
+password_file="$dest/socket-password"
+imported_flag="$dest/socket-password.imported"
+# What cmux does with "socketPassword" shapes all of this: on launch or config reload it moves
+# the value into its own private store, deletes the key from cmux.json and rewrites the whole
+# file as plain JSON, so the comments and the markers are gone (it keeps a cmux.<time>.bak).
+# A file without the key it leaves alone. So:
+#   - the password lives in $password_file (mode 600), which is where cw reads it;
+#   - the block carries "socketPassword" only until cmux has taken it ($imported_flag), and
+#     only "socketControlMode" after that, which keeps the file stable;
+#   - a file cmux has rewritten is recognised (no markers, plain JSON, password mode, no
+#     password key), has the keys this patch owns taken out with jq, and gets the block back.
 patch_cmux_json() {
-    local patch="$here/patches/cmux.patch.jsonc" tmp key clash=0
+    local template="$here/patches/cmux.patch.jsonc" patch tmp src key clash=0 password=""
     if [[ ! -e $cmux_json ]]; then
         changed=1
         plan "create     $cmux_json  (cmux normally writes its template on first launch)"
@@ -87,17 +101,70 @@ patch_cmux_json() {
         mkdir -p "$dest"
         printf '{\n  "$schema": "https://raw.githubusercontent.com/manaflow-ai/cmux/main/web/data/cmux.schema.json",\n  "schemaVersion": 1\n}\n' > "$cmux_json"
     fi
+
+    # The password: generated once, then kept, so running terminals stay valid.
+    if [[ -s $password_file ]]; then
+        password=$(<"$password_file")
+    else
+        password=$(openssl rand -hex 24)
+        changed=1
+        plan "create     $password_file  (socket password, mode 600)"
+        if (( ! dry )); then
+            rm -f "$imported_flag"
+            ( umask 077; printf '%s\n' "$password" > "$password_file" )
+        fi
+    fi
+
+    # Has cmux taken the password yet? Either it answers to it, or it has rewritten the file.
+    src=$cmux_json
+    local rewritten=0
+    if ! grep -qF -- "$begin_mark" "$cmux_json" && command -v jq >/dev/null 2>&1 \
+            && jq -e '.automation.socketControlMode == "password" and (.automation | has("socketPassword") | not)' \
+                "$cmux_json" >/dev/null 2>&1; then
+        rewritten=1
+    fi
+    if [[ ! -e $imported_flag ]]; then
+        if (( rewritten )) || { command -v cmux >/dev/null 2>&1 \
+                && CMUX_QUIET=1 CMUX_SOCKET_PASSWORD=$password cmux ping >/dev/null 2>&1 \
+                && ! env -u CMUX_SOCKET_PASSWORD -u CMUX_WORKSPACE_ID -u CMUX_SURFACE_ID cmux ping >/dev/null 2>&1; }; then
+            (( dry )) || : > "$imported_flag"
+            local imported=1
+        else
+            local imported=0
+        fi
+    else
+        local imported=1
+    fi
+    if (( rewritten )); then
+        say "note       $cmux_json was rewritten by cmux (it took the socket password); restoring the managed block"
+        src=$(mktemp)
+        jq 'del(.app.reorderOnNotification, .automation.claudeCodeIntegration,
+                .automation.socketControlMode, .automation.socketPassword)
+            | if .app == {} then del(.app) else . end
+            | if .automation == {} then del(.automation) else . end' "$cmux_json" > "$src"
+    fi
+
     # keys the patch sets at top level: lines like  "app": {
     while IFS= read -r key; do
         if awk -v b="$begin_mark" -v e="$end_mark" -v k="\"$key\"" '
                 $0 == b { skip = 1 } $0 == e { skip = 0; next }
                 !skip && $1 == k":" { found = 1 }
-                END { exit found ? 0 : 1 }' "$cmux_json"; then
+                END { exit found ? 0 : 1 }' "$src"; then
             say "conflict   $cmux_json already file-manages \"$key\"; merge patches/cmux.patch.jsonc by hand"
             clash=1
         fi
-    done < <(sed -n 's/^  "\([^"]*\)": .*/\1/p' "$patch")
-    (( clash )) && return 0
+    done < <(sed -n 's/^  "\([^"]*\)": .*/\1/p' "$template")
+    if (( clash )); then
+        [[ $src == "$cmux_json" ]] || rm -f "$src"
+        return 0
+    fi
+
+    patch=$(mktemp)
+    if (( imported )); then
+        sed '/"socketPassword"/d' "$template" > "$patch"
+    else
+        sed "s/\"@SOCKET_PASSWORD@\"/\"$password\"/" "$template" > "$patch"
+    fi
     tmp=$(mktemp)
     awk -v b="$begin_mark" -v e="$end_mark" -v patch="$patch" '
         BEGIN { while ((getline line < patch) > 0) block = block line "\n"; close(patch) }
@@ -106,20 +173,29 @@ patch_cmux_json() {
         skip { next }
         !done && $0 ~ /^[[:space:]]*"schemaVersion"[[:space:]]*:/ { printf "%s\n%s%s\n", b, block, e; done = 1 }
         { print }
-        END { if (!done) exit 3 }' "$cmux_json" > "$tmp" || {
-            rm -f "$tmp"
+        END { if (!done) exit 3 }' "$src" > "$tmp" || {
+            rm -f "$tmp" "$patch"
+            [[ $src == "$cmux_json" ]] || rm -f "$src"
             say "skipped    $cmux_json has no \"schemaVersion\" line; insert patches/cmux.patch.jsonc by hand"
             return 0
         }
+    rm -f "$patch"
+    [[ $src == "$cmux_json" ]] || rm -f "$src"
     if cmp -s "$tmp" "$cmux_json"; then
         say "unchanged  $cmux_json"
         rm -f "$tmp"
+        (( dry )) || chmod 600 "$cmux_json"
         return 0
     fi
     changed=1
-    plan "patch      $cmux_json  (managed block, backup $cmux_json.bak-$stamp)"
+    plan "patch      $cmux_json  (managed block, socket password mode, backup $cmux_json.bak-$stamp)"
+    if (( ! imported )); then
+        say "note       cmux takes the socket password out of cmux.json at its next launch or config reload and"
+        say "           rewrites the file without comments; run install.sh once more after that to restore the block"
+    fi
     if (( dry )); then rm -f "$tmp"; return 0; fi
     backup "$cmux_json"
+    chmod 600 "$cmux_json"                   # before the password goes in
     cat "$tmp" > "$cmux_json"
     rm -f "$tmp"
 }
@@ -208,19 +284,31 @@ patch_profile() {
 patch_profile
 
 # ---- 5. select the sidebar ---------------------------------------------------------------
-# The choice of sidebar lives in cmux's Settings store, not in cmux.json. The CLI only works
-# from a terminal cmux started.
-if [[ -n ${CMUX_WORKSPACE_ID:-} ]] && command -v cmux >/dev/null 2>&1; then
+# The choice of sidebar lives in cmux's Settings store, not in cmux.json, so it takes a call to
+# a running cmux: from a cmux terminal as it is, from any other terminal with the socket
+# password. When cmux does not answer, a marker is left and the first cw selects the sidebar.
+sidebar_pending="$dest/sidebar-select.pending"
+select_sidebar() {
+    local -x CMUX_QUIET=1
+    if [[ -z ${CMUX_WORKSPACE_ID:-} && -s $password_file ]]; then
+        local -x CMUX_SOCKET_PASSWORD
+        CMUX_SOCKET_PASSWORD=$(<"$password_file")
+    fi
+    if ! command -v cmux >/dev/null 2>&1 || ! cmux ping >/dev/null 2>&1; then
+        plan "sidebar    cmux does not answer; the first cw will select the workspaces sidebar"
+        (( dry )) || : > "$sidebar_pending"
+        return 0
+    fi
     if (( dry )); then
         say "would: cmux sidebar select workspaces"
-    elif CMUX_QUIET=1 cmux sidebar select workspaces >/dev/null 2>&1; then
+    elif cmux sidebar select workspaces >/dev/null 2>&1; then
         say "sidebar    workspaces selected"
+        rm -f "$sidebar_pending"
     else
         say "sidebar    could not select; run:  cmux sidebar select workspaces"
     fi
-else
-    say "sidebar    from a cmux terminal run:  cmux sidebar select workspaces"
-fi
+}
+select_sidebar
 
 # ---- done ----------------------------------------------------------------------------------
 say ""

@@ -5,9 +5,19 @@
   //                               cmux reorders when they notify; it assumes reordering is on.
   //   automation.claudeCodeIntegration   cw starts claude through cmux's per-surface claude
   //                               wrapper; that wrapper only exists with the integration on.
+  //   automation.socketControlMode / socketPassword   cw also runs from terminals cmux did
+  //                               not start (and starts cmux when it is not running). The
+  //                               default mode, cmuxOnly, refuses those; password mode admits
+  //                               any local process that presents the password. install.sh
+  //                               generates it into ~/.config/cmux/socket-password and fills
+  //                               it in below until cmux has taken it: cmux moves the value
+  //                               to its own store and rewrites this file, after which
+  //                               install.sh leaves the socketPassword line out.
   "app": {
     "reorderOnNotification": true
   },
   "automation": {
-    "claudeCodeIntegration": true
+    "claudeCodeIntegration": true,
+    "socketPassword": "@SOCKET_PASSWORD@",
+    "socketControlMode": "password"
   },

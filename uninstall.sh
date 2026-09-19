@@ -9,6 +9,8 @@
 # then-empty sidebars/ and teams-bin/ directories. Patched files are edited in place, with a
 # backup beside them as <name>.bak-<timestamp>:
 #   ~/.config/cmux/cmux.json      the marked block goes; nothing else in the file is touched.
+#                                 That puts the socket back in its default mode (cmuxOnly).
+#                                 ~/.config/cmux/socket-password is kept: cmux keeps its copy.
 #   ~/.claude/settings.json       hook entries whose command runs a file under
 #                                 ~/.config/cmux/ go; groups and events left empty go with
 #                                 them; everything else stays.
@@ -66,8 +68,35 @@ if [[ -e $cmux_json ]] && grep -qF -- "$begin_mark" "$cmux_json"; then
     changed=1
     plan "patch      $cmux_json  (managed block removed, backup $cmux_json.bak-$stamp)"
     if (( dry )); then rm -f "$tmp"; else backup "$cmux_json"; cat "$tmp" > "$cmux_json"; rm -f "$tmp"; fi
+elif [[ -e $cmux_json && -e $dest/socket-password ]] && command -v jq >/dev/null 2>&1 \
+        && jq -e '.automation.socketControlMode == "password"' "$cmux_json" >/dev/null 2>&1; then
+    # cmux rewrote the file as plain JSON when it took the socket password (see install.sh):
+    # no markers left, so the keys the block set are taken out with jq.
+    tmp=$(mktemp)
+    jq 'del(.app.reorderOnNotification, .automation.claudeCodeIntegration,
+            .automation.socketControlMode, .automation.socketPassword)
+        | if .app == {} then del(.app) else . end
+        | if .automation == {} then del(.automation) else . end' "$cmux_json" > "$tmp"
+    changed=1
+    plan "patch      $cmux_json  (keys of the managed block removed, backup $cmux_json.bak-$stamp)"
+    if (( dry )); then rm -f "$tmp"; else backup "$cmux_json"; cat "$tmp" > "$cmux_json"; rm -f "$tmp"; fi
 elif [[ -e $cmux_json ]]; then
     say "unchanged  $cmux_json (no managed block)"
+fi
+# The socket password itself STAYS. cmux keeps its copy in a private store, and does not take
+# a different one from cmux.json while it has that (seen 2026-09-19: uninstall, install, and
+# the freshly generated password was refused as invalid). With the socket back in its default
+# mode (cmuxOnly) the password opens nothing; a later install.sh picks it up again, and with
+# socket-password.imported also kept it knows not to offer cmux the password a second time.
+for f in "$dest/sidebar-select.pending"; do
+    [[ -e $f ]] || continue
+    changed=1
+    plan "remove     $f"
+    (( dry )) || rm -f "$f"
+done
+if [[ -e $dest/socket-password ]]; then
+    say "kept       $dest/socket-password  (cmux still holds this password; to be rid of it, clear it in"
+    say "           cmux Settings > Automation and delete the file and socket-password.imported)"
 fi
 
 # ---- 3. settings.json: drop our hook entries --------------------------------------------
@@ -131,7 +160,7 @@ say ""
 if (( dry )); then
     say "dry run: nothing changed."
 elif (( changed )); then
-    say "removed. In every open terminal:  unset -f cw c _cw_resolve_repo _cw_complete   (or open a new one)"
+    say "removed. In every open terminal:  unset -f cw c _cw_reach_cmux _cw_resolve_repo _cw_complete   (or open a new one)"
     say "Pick the built-in sidebar again: right-click the sidebar toggle button."
     say "cmux re-reads cmux.json on relaunch or with reloadConfiguration (cmd+shift+,)."
 else

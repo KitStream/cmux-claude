@@ -27,7 +27,8 @@
 # from the repo root with -w <name>, never from inside the worktree, because the root is where
 # it files, and looks for, the worktree's sessions.
 #
-# Run it from a terminal inside cmux: the cmux socket refuses processes cmux did not start.
+# It runs from any terminal: install.sh puts cmux's socket in password mode, and outside a cmux
+# terminal cw presents that password and starts cmux first when it is not running (_cw_reach_cmux).
 cw() {
     local explicit_repo=""
     if [[ ${1:-} == --repo ]]; then
@@ -50,9 +51,15 @@ cw() {
         fi
         shift
     fi
+    # The socket password _cw_reach_cmux exports stays local to this call, not in the shell.
     if [[ -z ${CMUX_WORKSPACE_ID:-} ]]; then
-        echo "cw: run this inside a cmux terminal (the cmux socket only accepts processes started by cmux)" >&2
-        return 1
+        local -x CMUX_SOCKET_PASSWORD=${CMUX_SOCKET_PASSWORD:-}
+    fi
+    _cw_reach_cmux || return 1
+    # install.sh could not reach cmux to select the custom sidebar: do it now, once.
+    if [[ -e $HOME/.config/cmux/sidebar-select.pending ]] \
+            && CMUX_QUIET=1 cmux sidebar select workspaces >/dev/null 2>&1; then
+        rm -f "$HOME/.config/cmux/sidebar-select.pending"
     fi
 
     # --no-worktree: same named workspace and session, but claude runs on the main checkout
@@ -133,6 +140,42 @@ cw() {
         --description claude \
         "${env_args[@]}" \
         --command "$cmd"
+}
+
+# Make the cmux socket answer, from whatever terminal this is. Inside a cmux terminal there is
+# nothing to do. Outside one, cmux's default socket mode (cmuxOnly) refuses the caller, so
+# install.sh pins password mode in cmux.json and keeps the password in ~/.config/cmux/socket-password
+# (cmux itself takes it out of cmux.json); it is read from there and handed to the
+# cmux CLI through CMUX_SOCKET_PASSWORD, for this shell's cmux calls only (not exported into
+# the workspace: cmux protects that key at spawn time anyway). cmux is started if no socket
+# answers, and given a while to come up.
+_cw_reach_cmux() {
+    [[ -n ${CMUX_WORKSPACE_ID:-} ]] && return 0
+    if [[ -z ${CMUX_SOCKET_PASSWORD:-} ]]; then
+        local password
+        password=$(cat "$HOME/.config/cmux/socket-password" 2>/dev/null)
+        if [[ -z $password ]]; then
+            echo "cw: outside a cmux terminal, and there is no ~/.config/cmux/socket-password;" >&2
+            echo "    re-run install.sh (it sets up password mode), or run cw inside cmux" >&2
+            return 1
+        fi
+        export CMUX_SOCKET_PASSWORD=$password
+    fi
+    if CMUX_QUIET=1 cmux ping >/dev/null 2>&1; then
+        return 0
+    fi
+    echo "cw: starting cmux"
+    open -a cmux || return 1
+    local i
+    for (( i = 0; i < 60; i++ )); do
+        if CMUX_QUIET=1 cmux ping >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.5
+    done
+    echo "cw: cmux does not answer on its socket. If it was already running, it has not read the" >&2
+    echo "    password mode from cmux.json yet: reload its configuration (cmd+shift+,) or relaunch it" >&2
+    return 1
 }
 
 # Which repository a session belongs to. Prints the repo root, or explains and fails.

@@ -28,7 +28,7 @@ mentioned in the refusal of a `--resume` that has nothing to resume.
 | `cmux/teams-bin/claude`, `cmux/teams-bin/tmux` | `~/.config/cmux/teams-bin/` | agent-teams mode only: give claude the tmux environment cmux's compat layer expects |
 | `patches/claude-settings.hooks.json` | merged into `~/.claude/settings.json` | the hook registrations for `cw-state-hook.sh` and `cw-colors-hook.sh` |
 | `patches/bash_profile.snippet` | block in `~/.bash_profile` | sources `cw.bash`; puts `teams-bin` on PATH in `--teams` workspaces |
-| `patches/cmux.patch.jsonc` | block in `~/.config/cmux/cmux.json` | pins the two cmux settings the tooling assumes |
+| `patches/cmux.patch.jsonc` | block in `~/.config/cmux/cmux.json` | pins the cmux settings the tooling assumes, and puts the socket in password mode |
 | `install.sh`, `uninstall.sh` | | copy and patch; remove and unpatch. Both take `--dry-run` |
 
 ## Install
@@ -58,7 +58,22 @@ already exist on a working machine are patched, not replaced, and every patch is
 - `~/.bash_profile` gets the snippet between two marker lines, appended at the end.
 
 The sidebar is chosen in cmux's Settings store, not in `cmux.json`: the installer runs
-`cmux sidebar select workspaces` when it runs inside cmux, otherwise it tells you to.
+`cmux sidebar select workspaces` when cmux answers, and otherwise leaves a marker so that the
+first `cw` does it.
+
+**`cw` runs from any terminal, and starts cmux when it is not running.** cmux's socket by
+default (`cmuxOnly`) only accepts processes started from a cmux terminal, and it has no
+per-program allowlist, so the installer switches it to password mode
+(`automation.socketControlMode`). The generated password is kept in
+`~/.config/cmux/socket-password` (mode 600); `cw` presents it through `CMUX_SOCKET_PASSWORD`
+for its own calls only. Any process running as you can read that file and then drive cmux,
+which is weaker than `cmuxOnly`; on a shared machine, think twice. cmux does not leave
+`socketPassword` in `cmux.json`: at its next launch or config reload it moves the value to
+its own store and rewrites the file as plain JSON, comments and markers gone. The installer
+recognises that state and restores the block (without the password line, which keeps the
+file stable from then on), so after the very first launch of cmux run `./install.sh` once more.
+While cmux holds a password it does not take a different one from `cmux.json`, which is why
+`uninstall.sh` leaves `socket-password` where it is.
 
 `cw` is a shell **function**. A terminal opened before an install or an edit keeps the old
 function until it runs `source ~/.bash_profile`. This has bitten twice; the installer says so.
