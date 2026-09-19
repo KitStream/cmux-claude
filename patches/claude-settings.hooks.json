@@ -1,0 +1,58 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.config/cmux/cw-state-hook.sh idle" },
+          { "type": "command", "command": "$HOME/.config/cmux/cw-colors-hook.sh" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$HOME/.config/cmux/cw-state-hook.sh working" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion|ExitPlanMode",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.config/cmux/cw-state-hook.sh question" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "AskUserQuestion|ExitPlanMode",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.config/cmux/cw-state-hook.sh working" }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.config/cmux/cw-state-hook.sh question" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$HOME/.config/cmux/cw-state-hook.sh done" }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$HOME/.config/cmux/cw-state-hook.sh idle" }
+        ]
+      }
+    ]
+  }
+}

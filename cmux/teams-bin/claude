@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# claude stand-in that adds the agent-teams environment for THIS process only.
+#
+# Lives in ~/.config/cmux/teams-bin, which ~/.bash_profile puts on PATH in cmux workspaces
+# that carry CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 (only `cw --teams` sets it; plain cw
+# workspaces never reach this file). PATH
+# order in such a shell is: cmux's per-surface shim dir, this dir, the rest. So a plain
+# `claude` goes shim -> cmux-claude-wrapper (injects the status hooks) -> this file (the
+# wrapper picks the next `claude` on PATH that is not a cmux shim) -> the real claude.
+#
+# Why here and not in the shell: TMUX in the shell's own environment switches cmux's shell
+# integration into a tmux mode that swallows claude's title updates (no spinner glyph, no
+# blue card) and made the wrapper skip its hooks. Set on the process alone, TMUX just makes
+# claude open teammates as tmux panes, which the tmux shim beside this file turns into cmux
+# splits. Covers cw-launch.sh AND cmux's own `claude --resume` after a relaunch.
+if [[ -n ${CMUX_WORKSPACE_ID:-} && -z ${TMUX:-} ]]; then
+    # The pane and session ids must be the ones cmux's tmux layer assigns to THIS surface:
+    # claude looks itself up by TMUX_PANE, and a made-up number answers "Pane target not
+    # found", after which it refuses to open teammate panes. Ask the layer.
+    here=$(cd -P -- "$(dirname -- "$0")" && pwd)
+    ids=$(TMUX=/tmp/cmux-claude-teams/probe,probe,0 TMUX_PANE=%0 \
+          "$here/tmux" display-message -p '#{pane_id} #{session_id}' 2>/dev/null)
+    pane=${ids%% *}
+    session=${ids##* }
+    session=${session#\$}
+    if [[ $pane == %* && -n $session ]]; then
+        win=$(CMUX_QUIET=1 "${CMUX_BUNDLED_CLI_PATH:-cmux}" current-window 2>/dev/null | head -1)
+        export TMUX="/tmp/cmux-claude-teams/$CMUX_WORKSPACE_ID,$win,$session"
+        export TMUX_PANE="$pane"
+        export TERM=screen-256color
+    fi
+fi
+export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+# The real binary: first `claude` on PATH that is neither this file nor a cmux shim.
+self=$(cd -P -- "$(dirname -- "$0")" && pwd)/claude
+IFS=: read -r -a dirs <<< "$PATH"
+for d in "${dirs[@]}"; do
+    c="$d/claude"
+    [[ -x $c ]] || continue
+    [[ $c -ef $self ]] && continue
+    case $c in */cmux-cli-shims/*|*/Resources/bin/claude) continue ;; esac
+    exec "$c" "$@"
+done
+echo "teams-bin/claude: no real claude found on PATH" >&2
+exit 127

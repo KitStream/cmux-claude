@@ -1,0 +1,13 @@
+  // Settings this tooling relies on, pinned as file-managed so a change in the Settings UI
+  // cannot silently break it. Every entry ends with a comma: install.sh inserts this block
+  // before "schemaVersion" in ~/.config/cmux/cmux.json.
+  //   app.reorderOnNotification   the workspaces sidebar keeps pinned cards above the ones
+  //                               cmux reorders when they notify; it assumes reordering is on.
+  //   automation.claudeCodeIntegration   cw starts claude through cmux's per-surface claude
+  //                               wrapper; that wrapper only exists with the integration on.
+  "app": {
+    "reorderOnNotification": true
+  },
+  "automation": {
+    "claudeCodeIntegration": true
+  },

@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# tmux stand-in for Claude Code agent teams inside cmux.  (bash only: uses ${!n}, ${@:a:b})
+#
+# Claude opens teammates as tmux panes when TMUX is set; this forwards every tmux call to
+# cmux's tmux-compat layer, which turns them into cmux splits. cmux's own per-surface shim
+# does the same but only when CMUX_CLAUDE_TEAMS_CMUX_BIN is set, and cmux resets any CMUX_*
+# workspace variable, so a session restored after a relaunch would lose it. This one needs
+# nothing but cmux's own CMUX_BUNDLED_CLI_PATH, which every cmux terminal has.
+# Put on PATH by ~/.bash_profile when CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 (set by cw).
+#
+# The ONE job here is PATH. Claude creates a teammate pane as `tmux -S <sock> split-window …
+# -- cat` and then puts the real command in with `tmux -S <sock> respawn-pane -k -t <pane> --
+# 'cd … && env … <claude> …'`. Teammate panes do NOT inherit this session's environment: cmux
+# runs the pane command through a bare /bin/sh whose PATH is /usr/bin:/bin:/usr/sbin:/sbin plus
+# its own shim dir, so node (nvm), ~/bin (kperf), homebrew and ~/.local/bin are missing and npx
+# fails (2026-09-14). Both the split and the respawn command are prefixed with this process's
+# PATH, spliced in behind the pane's first entry so cmux's per-surface shim dir stays first and
+# the parent's toolchain beats the system one. This surface's shim dir is left out.
+#
+# NOT handled here: the intermittent BLANK teammate pane (2026-09-14). Its content is in cmux's
+# terminal model (`cmux read-screen` shows it) but the on-screen Ghostty view never draws it,
+# and no pty resize, pty-size toggle, click, move or `cmux refresh-surfaces` repaints it. That
+# is a cmux view/runtime-binding bug for compat-layer panes, not reachable from a shell shim.
+# An earlier version did respawn-pane itself via send-keys to dodge it; that was unproven
+# against the blank and added lifecycle risk, so it was removed. Recover a blank pane by
+# respawning the teammate; the work behind it is unaffected. Report upstream.
+cmux=${CMUX_BUNDLED_CLI_PATH:-/Applications/cmux.app/Contents/Resources/bin/cmux}
+printf '%s tmux %s\n' "$(/bin/date +%H:%M:%S)" "$*" >> "$HOME/.cmuxterm/teams-tmux.log" 2>/dev/null   # what claude actually asks for
+
+# Find the subcommand behind tmux's global options (-S sock, -L name, -f file, -c cmd, -2 -C -l -u -v -V).
+# Any other -x is taken as boolean. Should tmux gain an option with a value, the loop lands on
+# that value, no case matches, and the call goes through unmodified: failing open is deliberate.
+i=1
+while (( i <= $# )); do
+    a=${!i}
+    case $a in
+        -S|-L|-f|-c) (( i += 2 )) ;;
+        -*)          (( i += 1 )) ;;
+        *)           break ;;
+    esac
+done
+sub=${!i:-}
+
+# This process's PATH as a shell prefix, or empty when there is nothing worth passing on.
+path_prefix() {
+    local inherit= d dirs
+    IFS=: read -r -a dirs <<< "$PATH"
+    for d in "${dirs[@]}"; do
+        [[ -n $d && $d != */cmux-cli-shims/* ]] || continue     # drops anything under such a dir; only cmux uses the name
+        inherit=${inherit:+$inherit:}$d
+    done
+    [[ -n $inherit ]] || return 0                                # never emit an empty component: that is "."
+    inherit=${inherit//\'/\'\\\'\'}                              # a ' in PATH would end the quote below
+    printf '%s' 'export PATH="${PATH:-/usr/bin:/bin}"; export PATH="${PATH%%:*}:"'"'$inherit'"'":${PATH#*:}"; '
+}
+
+case $sub in
+    respawn-pane|respawnp|split-window|splitw|new-window|neww)
+        n=$#
+        last=${!n}
+        if (( n > i )) && [[ $last == *claude* ]]; then
+            prefix=$(path_prefix)
+            set -- "${@:1:n-1}" "$prefix$last"
+        fi ;;
+esac
+exec "$cmux" __tmux-compat "$@"

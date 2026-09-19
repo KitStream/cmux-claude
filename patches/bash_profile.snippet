@@ -1,0 +1,5 @@
+# cw: one Claude Code session per git worktree, each in its own cmux workspace (see the file).
+[[ -r "$HOME/.config/cmux/cw.bash" ]] && . "$HOME/.config/cmux/cw.bash"
+# Claude Code agent teams inside cmux: forward tmux calls to cmux (see the shim). Only
+# `cw --teams` sets the variable on its workspaces; plain cw sessions never reach teams-bin.
+if [[ -n ${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-} && -n ${CMUX_WORKSPACE_ID:-} ]]; then export PATH="$HOME/.config/cmux/teams-bin:$PATH"; fi
