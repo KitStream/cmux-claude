@@ -29,6 +29,7 @@ mentioned in the refusal of a `--resume` that has nothing to resume.
 | `patches/claude-settings.hooks.json` | merged into `~/.claude/settings.json` | the hook registrations for `cw-state-hook.sh` and `cw-colors-hook.sh` |
 | `patches/bash_profile.snippet` | block in `~/.bash_profile` | sources `cw.bash`; puts `teams-bin` on PATH in `--teams` workspaces |
 | `patches/cmux.patch.jsonc` | block in `~/.config/cmux/cmux.json` | pins the two cmux settings the tooling assumes |
+| `install.sh`, `uninstall.sh` | | copy and patch; remove and unpatch. Both take `--dry-run` |
 
 ## Install
 
@@ -120,6 +121,13 @@ Plain `cw` sessions run subagents in-process, which is the fallback those issues
 
 ## Uninstall
 
-Remove the files under `~/.config/cmux` listed above, the marked blocks in `cmux.json` and
-`~/.bash_profile`, and the hook groups whose commands mention `~/.config/cmux/` in
-`~/.claude/settings.json`. Pick the built-in sidebar again from the sidebar toggle's menu.
+```
+./uninstall.sh --dry-run
+./uninstall.sh
+```
+
+Removes the copied files, the marked blocks in `cmux.json` and `~/.bash_profile` (plus any
+hand-installed `cw` lines), and the hook entries in `~/.claude/settings.json` whose command
+runs a file under `~/.config/cmux/`. Groups and events left empty go with them; nothing else
+is touched. Backups are written beside each edited file. The sidebar choice is not in any
+file: pick the built-in sidebar again from the sidebar toggle's right-click menu.
