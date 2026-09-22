@@ -8,8 +8,8 @@
 //
 // Agent state colours the whole card: blue wash while the agent is busy, orange wash and
 // orange title when it wants attention (an unread notification: a question, or a finished
-// turn), no wash when idle (the selected card keeps its grey wash). A small dot at the left
-// repeats the colour. The state comes from claude's terminal title, see statusOf.
+// turn), no wash when idle. The selected card gets an orange frame, no wash and no bold, so
+// it never hides the state colour. A small dot at the left repeats the colour. The state comes from claude's terminal title, see statusOf.
 // A red badge shows unread notifications. Click selects; right-click pins or closes; drag
 // reorders. Pinned workspaces stay in a block at the top, above the ones cmux reorders when
 // they notify (app.reorderOnNotification), so a pinned launcher never moves.
@@ -82,11 +82,10 @@ func dotColor(_ status: String) -> String {
     return "#00000000"
 }
 
-func cardColor(_ status: String, _ selected: Bool) -> String {
+func cardColor(_ status: String) -> String {
     if status == "needs_input" { return "#F2A33C40" }
     if status == "done" { return "#E6C84A2E" }
     if status == "working" { return "#4C9EEB33" }
-    if selected { return "#7f7f7f3d" }
     return "#00000000"
 }
 
@@ -102,7 +101,6 @@ func card(_ w: Any) -> some View {
                 HStack(alignment: .center, spacing: 4) {
                     Text(w.title)
                         .font(.system(size: 12))
-                        .fontWeight(w.selected ? .semibold : .regular)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .foregroundColor(status == "needs_input" ? "#F2A33C" : (w.selected ? .primary : .secondary))
@@ -144,7 +142,8 @@ func card(_ w: Any) -> some View {
         }
         .padding(4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardColor(status, w.selected))
+        .background(cardColor(status))
+        .border(w.selected ? "#F2A33C" : "#00000000", width: 2)
         .onTapGesture { cmux("workspace.select", workspace_id: w.id) }
         .contextMenu {
             Button(w.pinned ? "Unpin" : "Pin") {
