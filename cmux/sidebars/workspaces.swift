@@ -143,7 +143,7 @@ func card(_ w: Any) -> some View {
         .padding(4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(cardColor(status))
-        .border(w.selected ? "#F2A33C" : "#00000000", width: 2)
+        .border(w.selected ? "#F2A33C" : "#00000000", width: 1)
         .onTapGesture { cmux("workspace.select", workspace_id: w.id) }
         .contextMenu {
             Button(w.pinned ? "Unpin" : "Pin") {
